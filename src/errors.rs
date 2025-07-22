@@ -1,4 +1,4 @@
-use fractic_server_error::{define_client_error, define_internal_error, define_user_error};
+use fractic_server_error::{define_internal_error, define_user_error};
 
 define_internal_error!(
     SecretsManagerCalloutError,
