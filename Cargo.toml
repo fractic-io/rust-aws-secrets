@@ -1,5 +1,5 @@
 [package]
-name = "rust-aws-secrets"
+name = "fractic-aws-secrets"
 version = "0.1.0"
 edition = "2024"
 
