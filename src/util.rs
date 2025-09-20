@@ -12,7 +12,7 @@ pub struct SecretsUtil {
 
 impl SecretsUtil {
     pub async fn new(region: String) -> Self {
-        let shared_config = aws_config::defaults(BehaviorVersion::v2025_01_17())
+        let shared_config = aws_config::defaults(BehaviorVersion::v2025_08_07())
             .region(Region::new(region.clone()))
             .load()
             .await;
