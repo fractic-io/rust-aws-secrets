@@ -49,8 +49,8 @@ impl SecretsUtil {
             SecretsParsingError::new("secret value is empty or binary", secrets_id, &self.region)
         })?;
 
-        let secrets_json: HashMap<String, String> =
-            serde_json::from_str(secret_string).map_err(|e| {
+        let secrets_json: HashMap<String, serde_json::Value> = serde_json::from_str(secret_string)
+            .map_err(|e| {
                 SecretsParsingError::with_debug("invalid secret JSON", secrets_id, &self.region, &e)
             })?;
 
@@ -60,9 +60,58 @@ impl SecretsUtil {
             let value = secrets_json
                 .get(*key)
                 .ok_or_else(|| SecretsKeyNotFound::new(key, secrets_id))?;
-            subset.insert(*key, value.clone());
+            subset.insert(
+                *key,
+                stringify_secret_value(value, secrets_id, &self.region)?,
+            );
         }
 
         Ok(subset)
+    }
+}
+
+fn stringify_secret_value(
+    value: &serde_json::Value,
+    secrets_id: &str,
+    region: &str,
+) -> Result<String, ServerError> {
+    match value {
+        serde_json::Value::String(value) => Ok(value.clone()),
+        value => serde_json::to_string(value).map_err(|e| {
+            SecretsParsingError::with_debug(
+                "secret value could not be serialized",
+                secrets_id,
+                region,
+                &e,
+            )
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn stringify_secret_value_preserves_strings() {
+        assert_eq!(
+            stringify_secret_value(&json!("plain"), "secret", "region").unwrap(),
+            "plain"
+        );
+    }
+
+    #[test]
+    fn stringify_secret_value_serializes_structured_values() {
+        assert_eq!(
+            stringify_secret_value(
+                &json!({"active": "new", "keys": {"new": "abc"}}),
+                "secret",
+                "region"
+            )
+            .unwrap(),
+            r#"{"active":"new","keys":{"new":"abc"}}"#
+        );
     }
 }
