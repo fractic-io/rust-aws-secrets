@@ -22,13 +22,13 @@ impl SecretsUtil {
 
     /// Fetch a subset of secrets from AWS Secrets Manager.
     ///
-    /// The AWS secret is expected to be a JSON object that maps secret keys
-    /// (`&str`) to their String values.
+    /// The AWS secret must be a JSON object. Selected values are returned
+    /// without changing their JSON types.
     pub async fn load_secrets(
         &self,
         secrets_id: &str,
-        keys: &[&'static str],
-    ) -> Result<HashMap<&'static str, String>, ServerError> {
+        keys: &[&str],
+    ) -> Result<HashMap<String, serde_json::Value>, ServerError> {
         // Retrieve the JSON blob from Secrets Manager.
         let secrets_output = self
             .client
@@ -49,43 +49,30 @@ impl SecretsUtil {
             SecretsParsingError::new("secret value is empty or binary", secrets_id, &self.region)
         })?;
 
-        let secrets_json: HashMap<String, serde_json::Value> = serde_json::from_str(secret_string)
-            .map_err(|e| {
-                SecretsParsingError::with_debug("invalid secret JSON", secrets_id, &self.region, &e)
-            })?;
-
-        // Extract the requested subset.
-        let mut subset = HashMap::new();
-        for key in keys {
-            let value = secrets_json
-                .get(*key)
-                .ok_or_else(|| SecretsKeyNotFound::new(key, secrets_id))?;
-            subset.insert(
-                *key,
-                stringify_secret_value(value, secrets_id, &self.region)?,
-            );
-        }
-
-        Ok(subset)
+        parse_secret_values(secret_string, secrets_id, &self.region, keys)
     }
 }
 
-fn stringify_secret_value(
-    value: &serde_json::Value,
+fn parse_secret_values(
+    secret_string: &str,
     secrets_id: &str,
     region: &str,
-) -> Result<String, ServerError> {
-    match value {
-        serde_json::Value::String(value) => Ok(value.clone()),
-        value => serde_json::to_string(value).map_err(|e| {
-            SecretsParsingError::with_debug(
-                "secret value could not be serialized",
-                secrets_id,
-                region,
-                &e,
-            )
-        }),
+    keys: &[&str],
+) -> Result<HashMap<String, serde_json::Value>, ServerError> {
+    let mut secrets_json: HashMap<String, serde_json::Value> = serde_json::from_str(secret_string)
+        .map_err(|e| {
+            SecretsParsingError::with_debug("invalid secret JSON", secrets_id, region, &e)
+        })?;
+
+    let mut subset = HashMap::with_capacity(keys.len());
+    for key in keys {
+        let value = secrets_json
+            .remove(*key)
+            .ok_or_else(|| SecretsKeyNotFound::new(key, secrets_id))?;
+        subset.insert((*key).to_owned(), value);
     }
+
+    Ok(subset)
 }
 
 #[cfg(test)]
@@ -95,23 +82,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stringify_secret_value_preserves_strings() {
-        assert_eq!(
-            stringify_secret_value(&json!("plain"), "secret", "region").unwrap(),
-            "plain"
-        );
-    }
+    fn parse_secret_values_preserves_json_types() {
+        let values = parse_secret_values(
+            r#"{"plain":"value","structured":{"active":"new"}}"#,
+            "secret",
+            "region",
+            &["plain", "structured"],
+        )
+        .unwrap();
 
-    #[test]
-    fn stringify_secret_value_serializes_structured_values() {
-        assert_eq!(
-            stringify_secret_value(
-                &json!({"active": "new", "keys": {"new": "abc"}}),
-                "secret",
-                "region"
-            )
-            .unwrap(),
-            r#"{"active":"new","keys":{"new":"abc"}}"#
-        );
+        assert_eq!(values.get("plain"), Some(&json!("value")),);
+        assert_eq!(values.get("structured"), Some(&json!({"active": "new"})),);
     }
 }
