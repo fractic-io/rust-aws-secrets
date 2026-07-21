@@ -5,6 +5,9 @@ use std::collections::HashMap;
 
 use crate::errors::{SecretsKeyNotFound, SecretsManagerCalloutError, SecretsParsingError};
 
+// Public interface.
+// ----------------------------------------------------------------------------
+
 pub struct SecretsUtil {
     client: Client,
     region: String,
@@ -53,6 +56,9 @@ impl SecretsUtil {
     }
 }
 
+// Internal.
+// ----------------------------------------------------------------------------
+
 fn parse_secret_values(
     secret_string: &str,
     secrets_id: &str,
@@ -74,6 +80,9 @@ fn parse_secret_values(
 
     Ok(subset)
 }
+
+// Tests.
+// ----------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
