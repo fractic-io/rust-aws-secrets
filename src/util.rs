@@ -1,6 +1,7 @@
 use aws_config::BehaviorVersion;
 use aws_sdk_secretsmanager::{Client, config::Region};
 use fractic_server_error::ServerError;
+use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::errors::{SecretsKeyNotFound, SecretsManagerCalloutError, SecretsParsingError};
@@ -31,7 +32,7 @@ impl SecretsUtil {
         &self,
         secrets_id: &str,
         keys: &[&str],
-    ) -> Result<HashMap<String, serde_json::Value>, ServerError> {
+    ) -> Result<HashMap<String, Value>, ServerError> {
         // Retrieve the JSON blob from Secrets Manager.
         let secrets_output = self
             .client
@@ -64,21 +65,20 @@ fn parse_secret_values(
     secrets_id: &str,
     region: &str,
     keys: &[&str],
-) -> Result<HashMap<String, serde_json::Value>, ServerError> {
-    let mut secrets_json: HashMap<String, serde_json::Value> = serde_json::from_str(secret_string)
-        .map_err(|e| {
+) -> Result<HashMap<String, Value>, ServerError> {
+    let mut secrets_json: HashMap<String, Value> =
+        serde_json::from_str(secret_string).map_err(|e| {
             SecretsParsingError::with_debug("invalid secret JSON", secrets_id, region, &e)
         })?;
 
-    let mut subset = HashMap::with_capacity(keys.len());
-    for key in keys {
-        let value = secrets_json
-            .remove(*key)
-            .ok_or_else(|| SecretsKeyNotFound::new(key, secrets_id))?;
-        subset.insert((*key).to_owned(), value);
-    }
-
-    Ok(subset)
+    keys.iter()
+        .map(|&key| {
+            secrets_json
+                .remove(key)
+                .map(|value| (key.to_owned(), value))
+                .ok_or_else(|| SecretsKeyNotFound::new(key, secrets_id))
+        })
+        .collect()
 }
 
 // Tests.
@@ -100,7 +100,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(values.get("plain"), Some(&json!("value")),);
-        assert_eq!(values.get("structured"), Some(&json!({"active": "new"})),);
+        assert_eq!(values.get("plain"), Some(&json!("value")));
+        assert_eq!(values.get("structured"), Some(&json!({"active": "new"})));
     }
 }
