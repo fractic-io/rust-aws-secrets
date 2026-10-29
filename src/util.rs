@@ -26,12 +26,14 @@ impl SecretsUtil {
 
     /// Fetch a subset of secrets from AWS Secrets Manager.
     ///
-    /// The AWS secret must be a JSON object. Selected values are returned
-    /// without changing their JSON types.
+    /// The AWS secret must be a JSON object. A missing required key is an
+    /// error; a missing optional key is omitted from the result. Selected
+    /// values are returned without changing their JSON types.
     pub async fn load_secrets(
         &self,
         secrets_id: &str,
-        keys: &[&str],
+        required_keys: &[&str],
+        optional_keys: &[&str],
     ) -> Result<HashMap<String, Value>, ServerError> {
         // Retrieve the JSON blob from Secrets Manager.
         let secrets_output = self
@@ -53,7 +55,13 @@ impl SecretsUtil {
             SecretsParsingError::new("secret value is empty or binary", secrets_id, &self.region)
         })?;
 
-        parse_secret_values(secret_string, secrets_id, &self.region, keys)
+        parse_secret_values(
+            secret_string,
+            secrets_id,
+            &self.region,
+            required_keys,
+            optional_keys,
+        )
     }
 }
 
@@ -64,21 +72,27 @@ fn parse_secret_values(
     secret_string: &str,
     secrets_id: &str,
     region: &str,
-    keys: &[&str],
+    required_keys: &[&str],
+    optional_keys: &[&str],
 ) -> Result<HashMap<String, Value>, ServerError> {
     let mut secrets_json: HashMap<String, Value> =
         serde_json::from_str(secret_string).map_err(|e| {
             SecretsParsingError::with_debug("invalid secret JSON", secrets_id, region, &e)
         })?;
 
-    keys.iter()
-        .map(|&key| {
-            secrets_json
-                .remove(key)
-                .map(|value| (key.to_owned(), value))
-                .ok_or_else(|| SecretsKeyNotFound::new(key, secrets_id))
-        })
-        .collect()
+    let mut selected = HashMap::new();
+    for &key in required_keys {
+        let value = secrets_json
+            .get(key)
+            .ok_or_else(|| SecretsKeyNotFound::new(key, secrets_id))?;
+        selected.insert(key.to_owned(), value.clone());
+    }
+    for &key in optional_keys {
+        if let Some(value) = secrets_json.remove(key) {
+            selected.insert(key.to_owned(), value);
+        }
+    }
+    Ok(selected)
 }
 
 // Tests.
@@ -97,10 +111,28 @@ mod tests {
             "secret",
             "region",
             &["plain", "structured"],
+            &[],
         )
         .unwrap();
 
         assert_eq!(values.get("plain"), Some(&json!("value")));
         assert_eq!(values.get("structured"), Some(&json!({"active": "new"})));
+    }
+    #[test]
+    fn optional_keys_preserve_null_and_invalid_values_but_allow_absence() {
+        let values = parse_secret_values(
+            r#"{"required":"a","null":null,"invalid":42}"#,
+            "id",
+            "region",
+            &["required"],
+            &["missing", "null", "invalid"],
+        )
+        .unwrap();
+        assert!(!values.contains_key("missing"));
+        assert_eq!(values["null"], Value::Null);
+        assert_eq!(values["invalid"], json!(42));
+        assert!(serde_json::from_value::<Option<String>>(values["invalid"].clone()).is_err());
+        assert!(parse_secret_values("{}", "id", "region", &["required"], &["required"]).is_err());
+        assert!(parse_secret_values("broken", "id", "region", &[], &["optional"]).is_err());
     }
 }
