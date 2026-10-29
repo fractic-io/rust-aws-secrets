@@ -26,19 +26,10 @@ impl SecretsUtil {
 
     /// Fetch a subset of secrets from AWS Secrets Manager.
     ///
-    /// The AWS secret must be a JSON object. Selected values are returned
-    /// without changing their JSON types.
+    /// The AWS secret must be a JSON object. A missing required key is an
+    /// error; a missing optional key is omitted from the result. Selected
+    /// values are returned without changing their JSON types.
     pub async fn load_secrets(
-        &self,
-        secrets_id: &str,
-        keys: &[&str],
-    ) -> Result<HashMap<String, Value>, ServerError> {
-        self.load_secrets_with_optional(secrets_id, keys, &[]).await
-    }
-
-    /// Fetch required and optional keys in one Secrets Manager request.
-    /// Missing optional keys are omitted; present values retain their JSON types.
-    pub async fn load_secrets_with_optional(
         &self,
         secrets_id: &str,
         required_keys: &[&str],
@@ -81,7 +72,7 @@ fn parse_secret_values(
     secret_string: &str,
     secrets_id: &str,
     region: &str,
-    keys: &[&str],
+    required_keys: &[&str],
     optional_keys: &[&str],
 ) -> Result<HashMap<String, Value>, ServerError> {
     let mut secrets_json: HashMap<String, Value> =
@@ -90,7 +81,7 @@ fn parse_secret_values(
         })?;
 
     let mut selected = HashMap::new();
-    for &key in keys {
+    for &key in required_keys {
         let value = secrets_json
             .get(key)
             .ok_or_else(|| SecretsKeyNotFound::new(key, secrets_id))?;
